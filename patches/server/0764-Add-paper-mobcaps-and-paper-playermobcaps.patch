@@ -10,7 +10,7 @@ Also has a hover text on each mob category listing what entity types are
 in said category
 
 diff --git a/src/main/java/com/destroystokyo/paper/PaperCommand.java b/src/main/java/com/destroystokyo/paper/PaperCommand.java
-index f436ab35798c9b6e6cb2eb60d2c02cbf9b742e69..5a99ee69d19f6a323df423adb9998dc06c6c7aa2 100644
+index f436ab35798c9b6e6cb2eb60d2c02cbf9b742e69..6c076287d030651396535a7fa37b973c880ec507 100644
 --- a/src/main/java/com/destroystokyo/paper/PaperCommand.java
 +++ b/src/main/java/com/destroystokyo/paper/PaperCommand.java
 @@ -3,6 +3,7 @@ package com.destroystokyo.paper;
@@ -21,11 +21,12 @@ index f436ab35798c9b6e6cb2eb60d2c02cbf9b742e69..5a99ee69d19f6a323df423adb9998dc0
  import com.google.common.collect.ImmutableSet;
  import com.google.common.collect.Iterables;
  import com.google.common.collect.Lists;
-@@ -10,6 +11,11 @@ import com.google.common.collect.Maps;
+@@ -10,6 +11,12 @@ import com.google.common.collect.Maps;
  import com.google.gson.JsonObject;
  import com.google.gson.internal.Streams;
  import com.google.gson.stream.JsonWriter;
 +import net.kyori.adventure.text.Component;
++import net.kyori.adventure.text.ComponentLike;
 +import net.kyori.adventure.text.TextComponent;
 +import net.kyori.adventure.text.format.NamedTextColor;
 +import net.kyori.adventure.text.format.TextColor;
@@ -33,7 +34,7 @@ index f436ab35798c9b6e6cb2eb60d2c02cbf9b742e69..5a99ee69d19f6a323df423adb9998dc0
  import net.minecraft.resources.ResourceLocation;
  import net.minecraft.server.MCUtil;
  import net.minecraft.server.MinecraftServer;
-@@ -19,10 +25,12 @@ import net.minecraft.server.level.ServerLevel;
+@@ -19,10 +26,12 @@ import net.minecraft.server.level.ServerLevel;
  import net.minecraft.server.level.ServerPlayer;
  import net.minecraft.server.level.ThreadedLevelLightEngine;
  import net.minecraft.world.entity.EntityType;
@@ -46,7 +47,7 @@ index f436ab35798c9b6e6cb2eb60d2c02cbf9b742e69..5a99ee69d19f6a323df423adb9998dc0
  import org.apache.commons.lang3.tuple.MutablePair;
  import org.apache.commons.lang3.tuple.Pair;
  import org.bukkit.Bukkit;
-@@ -49,17 +57,19 @@ import java.util.ArrayList;
+@@ -49,17 +58,19 @@ import java.util.ArrayList;
  import java.util.Arrays;
  import java.util.Collection;
  import java.util.Collections;
@@ -67,7 +68,7 @@ index f436ab35798c9b6e6cb2eb60d2c02cbf9b742e69..5a99ee69d19f6a323df423adb9998dc0
  
      public PaperCommand(String name) {
          super(name);
-@@ -92,6 +102,10 @@ public class PaperCommand extends Command {
+@@ -92,6 +103,10 @@ public class PaperCommand extends Command {
                      return getListMatchingLast(sender, args, "help", "chunks");
                  }
                  break;
@@ -78,7 +79,7 @@ index f436ab35798c9b6e6cb2eb60d2c02cbf9b742e69..5a99ee69d19f6a323df423adb9998dc0
              case "chunkinfo":
                  List<String> worldNames = new ArrayList<>();
                  worldNames.add("*");
-@@ -188,6 +202,12 @@ public class PaperCommand extends Command {
+@@ -188,6 +203,12 @@ public class PaperCommand extends Command {
              case "syncloadinfo":
                  this.doSyncLoadInfo(sender, args);
                  break;
@@ -91,7 +92,7 @@ index f436ab35798c9b6e6cb2eb60d2c02cbf9b742e69..5a99ee69d19f6a323df423adb9998dc0
              case "ver":
                  if (!testPermission(sender, "version")) break; // "ver" needs a special check because it's an alias. All other commands are checked up before the switch statement (because they are present in the SUBCOMMANDS set)
              case "version":
-@@ -246,6 +266,167 @@ public class PaperCommand extends Command {
+@@ -246,6 +267,183 @@ public class PaperCommand extends Command {
          }
      }
  
@@ -228,8 +229,8 @@ index f436ab35798c9b6e6cb2eb60d2c02cbf9b742e69..5a99ee69d19f6a323df423adb9998dc0
 +                final TextColor color = entry.getValue();
 +
 +                final Component categoryHover = TextComponent.ofChildren(
-+                    Component.text("Entity types in category "),
-+                    Component.text(category.getName(), NamedTextColor.AQUA),
++                    Component.text("Entity types in category ", TextColor.color(0xE0E0E0)),
++                    Component.text(category.getName(), color),
 +                    Component.text(':', NamedTextColor.GRAY),
 +                    Component.newline(),
 +                    Component.newline(),
@@ -245,14 +246,30 @@ index f436ab35798c9b6e6cb2eb60d2c02cbf9b742e69..5a99ee69d19f6a323df423adb9998dc0
 +                    .hoverEvent(categoryHover)
 +                    .build();
 +
-+                return TextComponent.ofChildren(
-+                    categoryComponent,
-+                    Component.text(": ", NamedTextColor.GRAY),
-+                    Component.text(countGetter.applyAsInt(category)),
-+                    Component.text("/", NamedTextColor.GRAY),
-+                    Component.text(limitGetter.applyAsInt(category))
-+                );
++                final TextComponent.Builder builder = Component.text()
++                    .append(
++                        categoryComponent,
++                        Component.text(": ", NamedTextColor.GRAY)
++                    );
++                final int limit = limitGetter.applyAsInt(category);
++                if (limit != -1) {
++                    builder.append(
++                        Component.text(countGetter.applyAsInt(category)),
++                        Component.text("/", NamedTextColor.GRAY),
++                        Component.text(limit)
++                    );
++                } else {
++                    builder.append(Component.text()
++                        .append(
++                            Component.text('n'),
++                            Component.text("/", NamedTextColor.GRAY),
++                            Component.text('a')
++                        )
++                        .hoverEvent(Component.text("This category does not naturally spawn.")));
++                }
++                return builder;
 +            })
++            .map(ComponentLike::asComponent)
 +            .collect(Component.toComponent(Component.newline()));
 +    }
 +
