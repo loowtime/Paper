@@ -1,28 +1,39 @@
 From 0000000000000000000000000000000000000000 Mon Sep 17 00:00:00 2001
 From: Jason Penilla <11360596+jpenilla@users.noreply.github.com>
 Date: Mon, 16 Aug 2021 01:31:54 -0500
-Subject: [PATCH] Add '/paper mobcaps' command to view how full the mobcaps are
+Subject: [PATCH] Add '/paper mobcaps' and '/paper playermobcaps'
 
-Also has a hover text on each mob category listing what entity types are in said category
+Add commands to get the mobcaps for a world, as well as the mobcaps for
+each player when per-player mob spawning is enabled.
 
-TODO: Account for per-player spawning
+Also has a hover text on each mob category listing what entity types are
+in said category
 
 diff --git a/src/main/java/com/destroystokyo/paper/PaperCommand.java b/src/main/java/com/destroystokyo/paper/PaperCommand.java
-index f170dff5140d9beaaee3d987ae820b5971a8aa49..1f25d1925da71180b51feb09566f456af3e9ab5d 100644
+index f436ab35798c9b6e6cb2eb60d2c02cbf9b742e69..5a99ee69d19f6a323df423adb9998dc06c6c7aa2 100644
 --- a/src/main/java/com/destroystokyo/paper/PaperCommand.java
 +++ b/src/main/java/com/destroystokyo/paper/PaperCommand.java
-@@ -10,6 +10,10 @@ import com.google.common.collect.Maps;
+@@ -3,6 +3,7 @@ package com.destroystokyo.paper;
+ import com.destroystokyo.paper.io.SyncLoadFinder;
+ import com.google.common.base.Functions;
+ import com.google.common.base.Joiner;
++import com.google.common.collect.ImmutableMap;
+ import com.google.common.collect.ImmutableSet;
+ import com.google.common.collect.Iterables;
+ import com.google.common.collect.Lists;
+@@ -10,6 +11,11 @@ import com.google.common.collect.Maps;
  import com.google.gson.JsonObject;
  import com.google.gson.internal.Streams;
  import com.google.gson.stream.JsonWriter;
 +import net.kyori.adventure.text.Component;
 +import net.kyori.adventure.text.TextComponent;
 +import net.kyori.adventure.text.format.NamedTextColor;
++import net.kyori.adventure.text.format.TextColor;
 +import net.minecraft.core.Registry;
  import net.minecraft.resources.ResourceLocation;
  import net.minecraft.server.MCUtil;
  import net.minecraft.server.MinecraftServer;
-@@ -19,10 +23,12 @@ import net.minecraft.server.level.ServerLevel;
+@@ -19,10 +25,12 @@ import net.minecraft.server.level.ServerLevel;
  import net.minecraft.server.level.ServerPlayer;
  import net.minecraft.server.level.ThreadedLevelLightEngine;
  import net.minecraft.world.entity.EntityType;
@@ -35,70 +46,84 @@ index f170dff5140d9beaaee3d987ae820b5971a8aa49..1f25d1925da71180b51feb09566f456a
  import org.apache.commons.lang3.tuple.MutablePair;
  import org.apache.commons.lang3.tuple.Pair;
  import org.bukkit.Bukkit;
-@@ -49,8 +55,10 @@ import java.util.ArrayList;
+@@ -49,17 +57,19 @@ import java.util.ArrayList;
  import java.util.Arrays;
  import java.util.Collection;
  import java.util.Collections;
 +import java.util.Comparator;
  import java.util.Deque;
  import java.util.Iterator;
-+import java.util.LinkedHashMap;
  import java.util.List;
  import java.util.Locale;
  import java.util.Map;
-@@ -59,7 +67,7 @@ import java.util.stream.Collectors;
+ import java.util.Set;
++import java.util.function.ToIntFunction;
+ import java.util.stream.Collectors;
  
  public class PaperCommand extends Command {
      private static final String BASE_PERM = "bukkit.command.paper.";
 -    private static final ImmutableSet<String> SUBCOMMANDS = ImmutableSet.<String>builder().add("heap", "entity", "reload", "version", "debug", "chunkinfo", "fixlight", "syncloadinfo", "dumpitem").build();
-+    private static final ImmutableSet<String> SUBCOMMANDS = ImmutableSet.<String>builder().add("heap", "entity", "reload", "version", "debug", "chunkinfo", "fixlight", "syncloadinfo", "dumpitem", "mobcaps").build();
++    private static final ImmutableSet<String> SUBCOMMANDS = ImmutableSet.<String>builder().add("heap", "entity", "reload", "version", "debug", "chunkinfo", "fixlight", "syncloadinfo", "dumpitem", "mobcaps", "playermobcaps").build();
  
      public PaperCommand(String name) {
          super(name);
-@@ -92,6 +100,8 @@ public class PaperCommand extends Command {
+@@ -92,6 +102,10 @@ public class PaperCommand extends Command {
                      return getListMatchingLast(sender, args, "help", "chunks");
                  }
                  break;
 +            case "mobcaps":
 +                return getListMatchingLast(sender, args, this.suggestMobcaps(sender, args));
++            case "playermobcaps":
++                return getListMatchingLast(sender, args, this.suggestPlayerMobcaps(sender, args));
              case "chunkinfo":
                  List<String> worldNames = new ArrayList<>();
                  worldNames.add("*");
-@@ -188,6 +198,9 @@ public class PaperCommand extends Command {
+@@ -188,6 +202,12 @@ public class PaperCommand extends Command {
              case "syncloadinfo":
                  this.doSyncLoadInfo(sender, args);
                  break;
 +            case "mobcaps":
 +                this.printMobcaps(sender, args);
 +                break;
++            case "playermobcaps":
++                this.printPlayerMobcaps(sender, args);
++                break;
              case "ver":
                  if (!testPermission(sender, "version")) break; // "ver" needs a special check because it's an alias. All other commands are checked up before the switch statement (because they are present in the SUBCOMMANDS set)
              case "version":
-@@ -246,6 +259,115 @@ public class PaperCommand extends Command {
+@@ -246,6 +266,167 @@ public class PaperCommand extends Command {
          }
      }
  
-+    private static final List<NamedTextColor> COLORS_FOR_MOB_CATEGORIES = NamedTextColor.NAMES.values().stream()
-+        .filter(color -> color != NamedTextColor.WHITE && color != NamedTextColor.BLACK && color != NamedTextColor.GRAY && color != NamedTextColor.DARK_GRAY)
-+        .sorted(Comparator.comparing(Object::toString))
-+        .toList();
-+
-+    private static final Map<MobCategory, NamedTextColor> MOB_CATEGORY_COLORS = new LinkedHashMap<>() {{
-+        final List<MobCategory> categories = Arrays.asList(MobCategory.values());
-+        for (int i = 0; i < categories.size(); i++) {
-+            int colorIndex = i;
-+            while (colorIndex > COLORS_FOR_MOB_CATEGORIES.size() - 1) {
-+                colorIndex = colorIndex - COLORS_FOR_MOB_CATEGORIES.size();
-+            }
-+            this.put(categories.get(i), COLORS_FOR_MOB_CATEGORIES.get(colorIndex));
-+        }
-+    }};
++    public static final Map<MobCategory, TextColor> MOB_CATEGORY_COLORS = ImmutableMap.<MobCategory, TextColor>builder()
++        .put(MobCategory.MONSTER, NamedTextColor.RED)
++        .put(MobCategory.CREATURE, NamedTextColor.GREEN)
++        .put(MobCategory.AMBIENT, NamedTextColor.GRAY)
++        .put(MobCategory.UNDERGROUND_WATER_CREATURE, TextColor.color(0x3541E6))
++        .put(MobCategory.WATER_CREATURE, TextColor.color(0x006EFF))
++        .put(MobCategory.WATER_AMBIENT, TextColor.color(0x00B3FF))
++        .put(MobCategory.MISC, TextColor.color(0x636363))
++        .build();
 +
 +    private List<String> suggestMobcaps(CommandSender sender, String[] args) {
 +        if (args.length == 2) {
 +            final List<String> worlds = new ArrayList<>(Bukkit.getWorlds().stream().map(World::getName).toList());
 +            worlds.add("*");
 +            return worlds;
++        }
++
++        return Collections.emptyList();
++    }
++
++    private List<String> suggestPlayerMobcaps(CommandSender sender, String[] args) {
++        if (args.length == 2) {
++            final List<String> list = new ArrayList<>();
++            for (final Player player : Bukkit.getOnlinePlayers()) {
++                if (!(sender instanceof Player senderPlayer) || senderPlayer.canSee(player)) {
++                    list.add(player.getName());
++                }
++            }
++            return list;
 +        }
 +
 +        return Collections.emptyList();
@@ -132,9 +157,8 @@ index f170dff5140d9beaaee3d987ae820b5971a8aa49..1f25d1925da71180b51feb09566f456a
 +        }
 +
 +        for (final World world : worlds) {
-+            final NaturalSpawner.SpawnState state = ((CraftWorld) world).getHandle().getChunkSource().getLastSpawnState();
-+
-+            final TextComponent.Builder builder = Component.text();
++            final ServerLevel level = ((CraftWorld) world).getHandle();
++            final NaturalSpawner.SpawnState state = level.getChunkSource().getLastSpawnState();
 +
 +            final int chunks;
 +            if (state == null) {
@@ -142,24 +166,72 @@ index f170dff5140d9beaaee3d987ae820b5971a8aa49..1f25d1925da71180b51feb09566f456a
 +            } else {
 +                chunks = state.getSpawnableChunkCount();
 +            }
-+            builder.append(
++            sender.sendMessage(TextComponent.ofChildren(
 +                Component.text("Mobcaps for world: "),
 +                Component.text(world.getName(), NamedTextColor.AQUA),
 +                Component.text(" (" + chunks + " spawnable chunks)")
-+            );
++            ));
 +
-+            MOB_CATEGORY_COLORS.forEach((category, color) -> {
-+                final int count;
-+                if (state == null) {
-+                    count = 0;
-+                } else {
-+                    count = state.getMobCategoryCounts().getOrDefault(category, 0);
-+                }
++            sender.sendMessage(this.buildMobcapsComponent(
++                category -> {
++                    if (state == null) {
++                        return 0;
++                    } else {
++                        return state.getMobCategoryCounts().getOrDefault(category, 0);
++                    }
++                },
++                category -> NaturalSpawner.globalLimitForCategory(level, category, chunks)
++            ));
++        }
++    }
++
++    private void printPlayerMobcaps(CommandSender sender, String[] args) {
++        final Player player;
++        if (args.length == 1) {
++            if (sender instanceof Player pl) {
++                player = pl;
++            } else {
++                sender.sendMessage(Component.text("Must specify a player! ex: '/paper playermobcount playerName'", NamedTextColor.RED));
++                return;
++            }
++        } else if (args.length == 2) {
++            final String input = args[1];
++            player = Bukkit.getPlayerExact(input);
++            if (player == null) {
++                sender.sendMessage(Component.text("Could not find player named '" + input + "'", NamedTextColor.RED));
++                return;
++            }
++        } else {
++            sender.sendMessage(Component.text("Too many arguments!", NamedTextColor.RED));
++            return;
++        }
++
++        final ServerPlayer serverPlayer = ((CraftPlayer) player).getHandle();
++        final ServerLevel level = serverPlayer.getLevel();
++
++        if (!level.paperConfig.perPlayerMobSpawns) {
++            sender.sendMessage(Component.text("Use '/paper mobcaps' for worlds where per-player mob spawning is disabled.", NamedTextColor.RED));
++            return;
++        }
++
++        sender.sendMessage(TextComponent.ofChildren(Component.text("Mobcaps for player: "), Component.text(player.getName(), NamedTextColor.GREEN)));
++        sender.sendMessage(this.buildMobcapsComponent(
++            category -> level.chunkSource.chunkMap.getMobCountNear(serverPlayer, category),
++            category -> NaturalSpawner.limitForCategory(level, category)
++        ));
++    }
++
++    private Component buildMobcapsComponent(final ToIntFunction<MobCategory> countGetter, final ToIntFunction<MobCategory> limitGetter) {
++        return MOB_CATEGORY_COLORS.entrySet().stream()
++            .map(entry -> {
++                final MobCategory category = entry.getKey();
++                final TextColor color = entry.getValue();
 +
 +                final Component categoryHover = TextComponent.ofChildren(
 +                    Component.text("Entity types in category "),
 +                    Component.text(category.getName(), NamedTextColor.AQUA),
 +                    Component.text(':', NamedTextColor.GRAY),
++                    Component.newline(),
 +                    Component.newline(),
 +                    Registry.ENTITY_TYPE.entrySet().stream()
 +                        .filter(it -> it.getValue().getCategory() == category)
@@ -173,25 +245,22 @@ index f170dff5140d9beaaee3d987ae820b5971a8aa49..1f25d1925da71180b51feb09566f456a
 +                    .hoverEvent(categoryHover)
 +                    .build();
 +
-+                builder.append(
-+                    Component.newline(),
++                return TextComponent.ofChildren(
 +                    categoryComponent,
 +                    Component.text(": ", NamedTextColor.GRAY),
-+                    Component.text(count),
++                    Component.text(countGetter.applyAsInt(category)),
 +                    Component.text("/", NamedTextColor.GRAY),
-+                    Component.text(NaturalSpawner.limitForCategory(((CraftWorld) world).getHandle(), category))
++                    Component.text(limitGetter.applyAsInt(category))
 +                );
-+            });
-+
-+            sender.sendMessage(builder);
-+        }
++            })
++            .collect(Component.toComponent(Component.newline()));
 +    }
 +
      private void doChunkInfo(CommandSender sender, String[] args) {
          List<org.bukkit.World> worlds;
          if (args.length < 2 || args[1].equals("*")) {
 diff --git a/src/main/java/net/minecraft/world/level/NaturalSpawner.java b/src/main/java/net/minecraft/world/level/NaturalSpawner.java
-index 88145f04989c71a686aae1b486087ecdf55e268c..a2bdba4d296ae2583c38fb30040180168e73a4be 100644
+index 88145f04989c71a686aae1b486087ecdf55e268c..5f68858fad7825cb736aaa50342c1a2fff5f8f2c 100644
 --- a/src/main/java/net/minecraft/world/level/NaturalSpawner.java
 +++ b/src/main/java/net/minecraft/world/level/NaturalSpawner.java
 @@ -144,28 +144,15 @@ public final class NaturalSpawner {
@@ -231,7 +300,7 @@ index 88145f04989c71a686aae1b486087ecdf55e268c..a2bdba4d296ae2583c38fb3004018016
              }
  
              if (!spawnThisTick || limit == 0) {
-@@ -204,6 +191,19 @@ public final class NaturalSpawner {
+@@ -204,6 +191,24 @@ public final class NaturalSpawner {
          world.getProfiler().pop();
      }
  
@@ -246,8 +315,40 @@ index 88145f04989c71a686aae1b486087ecdf55e268c..a2bdba4d296ae2583c38fb3004018016
 +            default -> enumcreaturetype.getMaxInstancesPerChunk();
 +        };
 +    }
++
++    public static int globalLimitForCategory(final ServerLevel level, final MobCategory category, final int spawnableChunkCount) {
++        if (!level.paperConfig.perPlayerMobSpawns) return limitForCategory(level, category);
++        return limitForCategory(level, category) * spawnableChunkCount / NaturalSpawner.MAGIC_NUMBER;
++    }
 +    // Paper end
 +
      // Paper start - add parameters and int ret type
      public static void spawnCategoryForChunk(MobCategory group, ServerLevel world, LevelChunk chunk, NaturalSpawner.SpawnPredicate checker, NaturalSpawner.AfterSpawnCallback runner) {
          spawnCategoryForChunk(group, world, chunk, checker, runner);
+diff --git a/src/test/java/io/papermc/paper/PaperCommandTest.java b/src/test/java/io/papermc/paper/PaperCommandTest.java
+new file mode 100644
+index 0000000000000000000000000000000000000000..4b5b368ef17bdb90f50e6ccc1f814cf93c7c0590
+--- /dev/null
++++ b/src/test/java/io/papermc/paper/PaperCommandTest.java
+@@ -0,0 +1,21 @@
++package io.papermc.paper;
++
++import com.destroystokyo.paper.PaperCommand;
++import java.util.HashSet;
++import java.util.Set;
++import net.minecraft.world.entity.MobCategory;
++import org.junit.Assert;
++import org.junit.Test;
++
++public class PaperCommandTest {
++    @Test
++    public void testMobCategoryColors() {
++        final Set<String> missing = new HashSet<>();
++        for (final MobCategory value : MobCategory.values()) {
++            if (!PaperCommand.MOB_CATEGORY_COLORS.containsKey(value)) {
++                missing.add(value.getName());
++            }
++        }
++        Assert.assertTrue("PaperCommand.MOB_CATEGORY_COLORS map missing TextColors for [" + String.join(", ", missing + "]"), missing.isEmpty());
++    }
++}
