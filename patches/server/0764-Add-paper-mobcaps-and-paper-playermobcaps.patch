@@ -277,7 +277,7 @@ index f436ab35798c9b6e6cb2eb60d2c02cbf9b742e69..6c076287d030651396535a7fa37b973c
          List<org.bukkit.World> worlds;
          if (args.length < 2 || args[1].equals("*")) {
 diff --git a/src/main/java/net/minecraft/world/level/NaturalSpawner.java b/src/main/java/net/minecraft/world/level/NaturalSpawner.java
-index 88145f04989c71a686aae1b486087ecdf55e268c..5f68858fad7825cb736aaa50342c1a2fff5f8f2c 100644
+index 88145f04989c71a686aae1b486087ecdf55e268c..83d6b2e4d75ce2e534925ea93222f5f42ca6844e 100644
 --- a/src/main/java/net/minecraft/world/level/NaturalSpawner.java
 +++ b/src/main/java/net/minecraft/world/level/NaturalSpawner.java
 @@ -144,28 +144,15 @@ public final class NaturalSpawner {
@@ -317,7 +317,7 @@ index 88145f04989c71a686aae1b486087ecdf55e268c..5f68858fad7825cb736aaa50342c1a2f
              }
  
              if (!spawnThisTick || limit == 0) {
-@@ -204,6 +191,24 @@ public final class NaturalSpawner {
+@@ -204,6 +191,23 @@ public final class NaturalSpawner {
          world.getProfiler().pop();
      }
  
@@ -334,7 +334,6 @@ index 88145f04989c71a686aae1b486087ecdf55e268c..5f68858fad7825cb736aaa50342c1a2f
 +    }
 +
 +    public static int globalLimitForCategory(final ServerLevel level, final MobCategory category, final int spawnableChunkCount) {
-+        if (!level.paperConfig.perPlayerMobSpawns) return limitForCategory(level, category);
 +        return limitForCategory(level, category) * spawnableChunkCount / NaturalSpawner.MAGIC_NUMBER;
 +    }
 +    // Paper end
